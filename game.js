@@ -197,7 +197,8 @@ function burst(pos, color, n, speed) {
 }
 
 /* ================= AÇÕES ================= */
-function slice(it, s) {
+function slice(it, s)
+ {
   const t = it.type, pos = it.mesh.position.clone();
   const dir = s.vel.clone(); if (dir.lengthSq() < 1e-4) dir.set(1, 0, 0); dir.normalize();
   const axis = s.tip.clone().sub(s.base).normalize();
@@ -270,10 +271,16 @@ function update(dt) {
         if (!s.active) continue;
         if (segDist(m.position, s.base, s.tip) < it.r + 0.04) {
           if (it.bomb) { hitBomb(it, s); break; }
-          if (s.speed > CUT_SPEED) { slice(it, s); break; }
-        }
+          // A melancia de início/fim precisa de menos velocidade para ser cortada.
+           const velocidadeMinima = it.start ? 0.15 : CUT_SPEED;
+           if (s.speed > velocidadeMinima) {
+               slice(it, s);
+               break;
+              }
       }
     }
+  }
+ 
     if (!it.dead && (m.position.z > 1.2 || m.position.y < -1)) {
       if (!it.bomb && state === 'play' && combo) { combo = 0; drawHud(); } // fruta perdida zera o combo
       it.dead = true;
