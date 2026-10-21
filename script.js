@@ -1,8 +1,8 @@
 // ============================================================
-// JOGO DA VELHA — VERSAO 5.1
-// v5.1 FIX: convidado agora vê mensagem de vitória/derrota/empate
+// JOGO DA VELHA — VERSAO 5.2
+// v5.2: banner fixo de resultado + nomes personalizados no online
 // ============================================================
-const VERSAO_CODIGO = "5.1";
+const VERSAO_CODIGO = "5.2";
 console.log("%c=== JOGO DA VELHA " + VERSAO_CODIGO + " ===", "color:cyan;font-size:16px;font-weight:bold");
 
 // ---------------- ESTADO ----------------
@@ -76,6 +76,27 @@ const btnVoltarMenuOnline = document.getElementById("btnVoltarMenuOnline");
 
 let confeteAnimando = false;
 
+// ---------------- INJETAR INPUT DE NOME NA TELA ONLINE ----------------
+(function injetarCampoNome() {
+    if (document.getElementById("nomeJogadorOnline")) return;
+    const intro = telaOnline && telaOnline.querySelector("p");
+    if (!intro) return;
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "width:100%;margin:0 0 16px;text-align:center;";
+    wrap.innerHTML =
+        '<label style="display:block;font-size:13px;color:#9494b0;margin-bottom:8px;font-weight:600;">Seu nome (opcional)</label>' +
+        '<input type="text" id="nomeJogadorOnline" placeholder="Ex: João" maxlength="20" ' +
+        'style="width:100%;padding:14px 18px;border-radius:10px;border:1px solid rgba(255,255,255,0.15);' +
+        'background:rgba(30,30,60,0.55);color:#e8e8f0;font-size:16px;text-align:center;font-family:inherit;box-sizing:border-box;">';
+    intro.parentNode.insertBefore(wrap, intro.nextSibling);
+})();
+
+function getNomeOnline(fallback) {
+    const el = document.getElementById("nomeJogadorOnline");
+    const v = el ? el.value.trim() : "";
+    return v || fallback;
+}
+
 // ---------------- NAVEGAÇÃO ----------------
 function mostrarTela(tela) {
     [telaMenu, telaNivel, telaConfig, telaJogo, telaOnline].forEach(t => t && t.classList.add("escondido"));
@@ -133,12 +154,15 @@ let estadoInicialAplicado = false;
 
 let versaoEstado = 0;
 let ultimaVersaoRecebida = -1;
-let resultadoExibido = false;   // v5.1 FIX
+let resultadoExibido = false;
 
 let pollingConexao = null;
 let timeoutConexao = null;
 let timeoutSolicitarEstado = null;
 let intervalHeartbeat = null;
+
+let nomeHostAtual = "Host";
+let nomeGuestAtual = "Convidado";
 
 const CARACTERES_SALA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const TAMANHO_CODIGO  = 6;
@@ -180,7 +204,6 @@ function setDebug(msg) {
     if (el) el.textContent = msg;
 }
 
-// Painel visível no topo da tela de jogo
 function atualizarPainelEstado() {
     let el = document.getElementById("painelEstado");
     if (!el && telaJogo) {
@@ -195,6 +218,25 @@ function atualizarPainelEstado() {
     const t = tabuleiro.map(v => v || ".").join("");
     const v = isHost ? versaoEstado : ultimaVersaoRecebida;
     el.textContent = `${papel} | v${VERSAO_CODIGO} | tab=${t} | turno=${turnoAtual} | estado=v${v}`;
+}
+
+// Banner fixo de resultado (garante visibilidade)
+function mostrarBannerResultado(texto, cor) {
+    let banner = document.getElementById("bannerResultado");
+    if (!banner) {
+        banner = document.createElement("div");
+        banner.id = "bannerResultado";
+        banner.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:24px 44px;background:rgba(10,10,26,0.95);color:#fff;font-size:30px;font-weight:900;border-radius:20px;z-index:999999;text-align:center;pointer-events:none;border:4px solid #89b4fa;box-shadow:0 0 50px rgba(137,180,250,0.8);letter-spacing:1px;";
+        document.body.appendChild(banner);
+    }
+    banner.textContent = texto;
+    banner.style.borderColor = cor || "#89b4fa";
+    banner.style.display = "block";
+    console.log("[v" + VERSAO_CODIGO + "] Banner resultado:", texto);
+}
+function esconderBannerResultado() {
+    const banner = document.getElementById("bannerResultado");
+    if (banner) banner.style.display = "none";
 }
 
 if (inputIdSala) {
@@ -224,7 +266,8 @@ function destruirConexao() {
     estadoInicialAplicado = false;
     versaoEstado = 0;
     ultimaVersaoRecebida = -1;
-    resultadoExibido = false;   // v5.1 FIX
+    resultadoExibido = false;
+    esconderBannerResultado();
     atualizarPainelEstado();
 }
 
@@ -247,9 +290,10 @@ if (btnEntrarSala) btnEntrarSala.addEventListener("click", () => {
 // --------------------------------------------------------------
 function iniciarHost(tentativa = 0) {
     if (typeof Peer === "undefined") { setDebug("ERRO: PeerJS não carregou."); return; }
+    nomeHostAtual = getNomeOnline("Host");
     const codigo = gerarCodigoSala();
     const peerId = PREFIXO_PEER + codigo;
-    setDebug("Host v" + VERSAO_CODIGO + ": criando peer " + peerId);
+    setDebug("Host v" + VERSAO_CODIGO + ": criando peer " + peerId + " (nome: " + nomeHostAtual + ")");
     peer = new Peer(peerId, { config: CONFIG_ICE });
 
     peer.on("open", () => {
@@ -257,10 +301,12 @@ function iniciarHost(tentativa = 0) {
         isHost = true;
         if (meuIdSalaEl) meuIdSalaEl.textContent = codigo;
         if (statusConexaoEl) statusConexaoEl.textContent = "Aguardando convidado...";
-        setDebug("Host: aguardando convidado (código " + codigo + ")");
+        setDebug("Host: aguardando convidado (código " + codigo + ", meu nome: " + nomeHostAtual + ")");
 
         peer.on("connection", (connection) => {
-            setDebug("Host: convidado detectado, open=" + connection.open);
+            const guestName = (connection.metadata && connection.metadata.nome) || "Convidado";
+            nomeGuestAtual = guestName;
+            setDebug("Host: convidado detectado (" + guestName + "), open=" + connection.open);
             conn = connection;
             configurarConexao(conn);
 
@@ -290,16 +336,15 @@ function iniciarJogoHost() {
     conexaoEstabelecida = true;
     multiplayerAtivo = true;
     modoJogo = "pvp";
-    nomeJ1 = "Host (X)";
-    nomeJ2 = "Convidado (O)";
+    nomeJ1 = nomeHostAtual;
+    nomeJ2 = nomeGuestAtual;
     quemComeca = simboloJ1;
     placar = { j1: 0, empate: 0, j2: 0 };
     versaoEstado = 0;
-    resultadoExibido = false;   // v5.1 FIX
+    resultadoExibido = false;
     mostrarTela(telaJogo);
     iniciarPartida();
 
-    // Heartbeat: reenvia estado a cada 800ms
     if (intervalHeartbeat) clearInterval(intervalHeartbeat);
     intervalHeartbeat = setInterval(() => {
         if (multiplayerAtivo && isHost && conn && conn.open) {
@@ -320,13 +365,14 @@ function entrarNaSala(codigoDigitado) {
         alert(`O código deve ter ${TAMANHO_CODIGO} caracteres.`);
         return;
     }
+    const meuNome = getNomeOnline("Convidado");
     const peerId = PREFIXO_PEER + codigo;
     peer = new Peer({ config: CONFIG_ICE });
-    setDebug("Cliente v" + VERSAO_CODIGO + ": conectando a " + peerId);
+    setDebug("Cliente v" + VERSAO_CODIGO + ": conectando a " + peerId + " (meu nome: " + meuNome + ")");
 
     peer.on("open", () => {
         setDebug("Cliente: peer conectado, abrindo DataConnection...");
-        conn = peer.connect(peerId, { reliable: true });
+        conn = peer.connect(peerId, { reliable: true, metadata: { nome: meuNome } });
         configurarConexao(conn);
 
         if (pollingConexao) clearInterval(pollingConexao);
@@ -399,18 +445,13 @@ function configurarConexao(connection) {
 
             mostrarTela(telaJogo);
             atualizarInterfaceCompleta();
-            exibirResultadoSeAcabou();   // v5.1 FIX
+            exibirResultadoSeAcabou();
             if (statusConexaoEl) statusConexaoEl.textContent = "Conectado!";
-            setDebug("Cliente: aplicado v" + data.versao + " tab=" + tabuleiro.join(""));
+            setDebug("Cliente: aplicado v" + data.versao + " tab=" + tabuleiro.join("") + " fim=" + jogoAcabou);
 
         } else if (data.tipo === "jogada") {
             if (!isHost) return;
-
-            const podeAplicar =
-                tabuleiro[data.index] === "" &&
-                !jogoAcabou &&
-                turnoAtual === simboloJ2;
-
+            const podeAplicar = tabuleiro[data.index] === "" && !jogoAcabou && turnoAtual === simboloJ2;
             if (podeAplicar) {
                 aplicarJogadaLocal(data.index, simboloJ2);
                 versaoEstado++;
@@ -473,10 +514,9 @@ function atualizarInterfaceCompleta() {
     atualizarPainelEstado();
 }
 
-// v5.1 FIX: exibe o resultado no lado do convidado quando o estado chega
+// FIX: exibe resultado no lado do convidado
 function exibirResultadoSeAcabou() {
     if (!jogoAcabou) {
-        // Se uma partida nova começou, reseta o controle e esconde o overlay
         if (resultadoExibido) {
             resultadoExibido = false;
             esconderVitoria();
@@ -492,15 +532,18 @@ function exibirResultadoSeAcabou() {
         if (mensagemEl) mensagemEl.textContent = `${nomeJ1} venceu!`;
         tocarSomVitoria();
         mostrarVitoria(nomeJ1);
+        console.log("[v" + VERSAO_CODIGO + "] Resultado exibido no cliente: VITÓRIA " + nomeJ1);
     } else if (verificarVitoriaEm(tabuleiro, simboloJ2)) {
         const comb = encontrarCombinacaoVencedora(simboloJ2);
         destacarVitoria(comb);
         if (mensagemEl) mensagemEl.textContent = `${nomeJ2} venceu!`;
         tocarSomVitoria();
         mostrarVitoria(nomeJ2);
+        console.log("[v" + VERSAO_CODIGO + "] Resultado exibido no cliente: VITÓRIA " + nomeJ2);
     } else if (!tabuleiro.includes("")) {
         if (mensagemEl) mensagemEl.textContent = "Empate!";
         tocarSomEmpate();
+        mostrarBannerResultado("🤝 EMPATE!", "#f9e2af");
     }
 }
 
@@ -525,7 +568,6 @@ function jogarNaCelula(index) {
 
     if (multiplayerAtivo) {
         if (!conexaoEstabelecida) return;
-
         if (isHost) {
             if (turnoAtual !== simboloJ1) return;
             const simboloJogado = turnoAtual;
@@ -612,6 +654,7 @@ function verificarVitoriaEm(tab, jog) {
 
 // ---------------- MENSAGENS / FIM ----------------
 function atualizarMensagemTurno() {
+    if (jogoAcabou) return;   // FIX: não sobrescreve mensagem de resultado
     const nome = turnoAtual === simboloJ1 ? nomeJ1 : nomeJ2;
     if (mensagemEl) mensagemEl.textContent = `Vez de ${nome} (${turnoAtual})`;
 }
@@ -620,7 +663,7 @@ function encontrarCombinacaoVencedora(jog) {
     return c.find(x => x.every(i => tabuleiro[i] === jog));
 }
 function destacarVitoria(comb) {
-    if (!tabuleiroEl) return;
+    if (!tabuleiroEl || !comb) return;
     const cels = tabuleiroEl.querySelectorAll(".celula");
     comb.forEach(i => cels[i] && cels[i].classList.add("vencedora"));
 }
@@ -652,12 +695,23 @@ function iniciarConfete() {
 }
 function mostrarVitoria(nome) {
     if (textoVitoriaEl) textoVitoriaEl.textContent = `🎉 ${nome} VENCEU! 🎉`;
-    if (overlayVitoriaEl) overlayVitoriaEl.classList.remove("escondido");
+    if (overlayVitoriaEl) {
+        overlayVitoriaEl.classList.remove("escondido");
+        overlayVitoriaEl.style.display = "flex";   // força
+        overlayVitoriaEl.style.background = "rgba(0,0,0,0.5)";
+        void overlayVitoriaEl.offsetHeight;        // força reflow
+    }
+    mostrarBannerResultado(`🎉 ${nome} VENCEU! 🎉`, "#a6e3a1");
     iniciarConfete();
 }
 function esconderVitoria() {
     confeteAnimando = false;
-    if (overlayVitoriaEl) overlayVitoriaEl.classList.add("escondido");
+    if (overlayVitoriaEl) {
+        overlayVitoriaEl.classList.add("escondido");
+        overlayVitoriaEl.style.display = "";
+        overlayVitoriaEl.style.background = "";
+    }
+    esconderBannerResultado();
 }
 function verificarFimDeJogo(jog) {
     if (verificarVitoriaEm(tabuleiro, jog)) {
@@ -679,6 +733,7 @@ function verificarFimDeJogo(jog) {
     if (!tabuleiro.includes("")) {
         if (mensagemEl) mensagemEl.textContent = "Empate!";
         tocarSomEmpate();
+        mostrarBannerResultado("🤝 EMPATE!", "#f9e2af");
         placar.empate++; if (placarEmpateEl) placarEmpateEl.textContent = placar.empate;
         jogoAcabou = true;
         return true;
@@ -691,7 +746,7 @@ function iniciarPartida() {
     tabuleiro = ["", "", "", "", "", "", "", "", ""];
     jogoAcabou = false;
     turnoAtual = quemComeca;
-    resultadoExibido = false;   // v5.1 FIX
+    resultadoExibido = false;
     esconderVitoria();
     criarTabuleiro();
     atualizarPainelEstado();
