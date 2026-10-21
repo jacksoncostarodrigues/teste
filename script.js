@@ -1,6 +1,6 @@
 // ============================================================
 // JOGO DA VELHA — script.js COMPLETO
-// Modos: PVC (contra computador), PvP (local), Online (PeerJS/VR)
+// Modos: PVC, PvP local, Online (PeerJS/VR)
 // ============================================================
 
 // ---------------- ESTADO ----------------
@@ -157,17 +157,20 @@ let isHost = false;
 let salaId = null;
 let multiplayerAtivo = false;
 let conexaoEstabelecida = false;
+let estadoInicialAplicado = false;
 
-let versaoEstado = 0;              // incrementado a cada partida/restart
-let ultimaVersaoRecebida = -1;     // usado no cliente para idempotência
-let timeoutSolicitarEstado = null; // timer de fallback no cliente
+let versaoEstado = 0;
+let ultimaVersaoRecebida = -1;
 
-// --- Código curto de sala ---
+let pollingConexao = null;
+let timeoutConexao = null;
+let timeoutSolicitarEstado = null;
+let intervalReenviarEstado = null;
+
 const CARACTERES_SALA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const TAMANHO_CODIGO  = 6;
 const PREFIXO_PEER    = "jdv-vr-";
 
-// --- Configuração de rede (STUN/TURN) ---
 const CONFIG_ICE = {
     iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
@@ -193,7 +196,22 @@ function normalizarCodigo(codigo) {
     return (codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
-// Configura o input do código de sala (UX)
+function setDebug(msg) {
+    console.log("[Debug]", msg);
+    let el = document.getElementById("debugText");
+    if (!el && telaOnline) {
+        const box = document.createElement("div");
+        box.id = "debugBox";
+        box.style.cssText = "margin-top:16px;padding:10px;border-radius:8px;background:rgba(0,0,0,0.35);color:#f9e2af;font-size:12px;font-family:monospace;word-break:break-all;max-width:100%;text-align:left;";
+        box.innerHTML = '<b>Debug:</b> <span id="debugText"></span>';
+        const ref = document.getElementById("btnVoltarMenuOnline");
+        if (ref && ref.parentNode) ref.parentNode.insertBefore(box, ref);
+        else if (telaOnline) telaOnline.appendChild(box);
+        el = document.getElementById("debugText");
+    }
+    if (el) el.textContent = msg;
+}
+
 if (inputIdSala) {
     inputIdSala.maxLength = TAMANHO_CODIGO;
     inputIdSala.placeholder = `Código de ${TAMANHO_CODIGO} caracteres`;
@@ -210,15 +228,17 @@ if (inputIdSala) {
 }
 
 function destruirConexao() {
-    if (timeoutSolicitarEstado) {
-        clearTimeout(timeoutSolicitarEstado);
-        timeoutSolicitarEstado = null;
-    }
+    if (pollingConexao) { clearInterval(pollingConexao); pollingConexao = null; }
+    if (timeoutConexao) { clearTimeout(timeoutConexao); timeoutConexao = null; }
+    if (timeoutSolicitarEstado) { clearTimeout(timeoutSolicitarEstado); timeoutSolicitarEstado = null; }
+    if (intervalReenviarEstado) { clearInterval(intervalReenviarEstado); intervalReenviarEstado = null; }
     if (conn) { try { conn.close(); } catch (e) {} conn = null; }
     if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
     multiplayerAtivo = false;
     isHost = false;
     conexaoEstabelecida = false;
+    estadoInicialAplicado = false;
+    versaoEstado = 0;
     ultimaVersaoRecebida = -1;
 }
 
@@ -226,6 +246,7 @@ if (btnJogarOnline) btnJogarOnline.addEventListener("click", () => {
     destruirConexao();
     if (salaInfo) salaInfo.classList.add("escondido");
     if (statusConexaoEl) statusConexaoEl.textContent = "Aguardando conexão...";
+    setDebug("Pronto para criar ou entrar em sala.");
     mostrarTela(telaOnline);
 });
 
@@ -249,71 +270,80 @@ if (btnEntrarSala) btnEntrarSala.addEventListener("click", () => {
 // --------------------------------------------------------------
 function iniciarHost(tentativa = 0) {
     if (typeof Peer === "undefined") {
-        if (statusConexaoEl) statusConexaoEl.textContent = "PeerJS não carregou. Verifique a conexão.";
+        setDebug("ERRO: PeerJS não carregou.");
         return;
     }
 
     const codigo = gerarCodigoSala();
     const peerId = PREFIXO_PEER + codigo;
 
+    setDebug("Host: criando peer " + peerId);
     peer = new Peer(peerId, { config: CONFIG_ICE });
 
     peer.on("open", () => {
         salaId = codigo;
         isHost = true;
         if (meuIdSalaEl) meuIdSalaEl.textContent = codigo;
-        if (statusConexaoEl) statusConexaoEl.textContent = "Aguardando conexão...";
-        console.log("[Host] aberto com ID", codigo);
+        if (statusConexaoEl) statusConexaoEl.textContent = "Aguardando convidado...";
+        setDebug("Host: aguardando convidado (código " + codigo + ")");
 
         peer.on("connection", (connection) => {
-            console.log("[Host] peer.on('connection') disparou, open =", connection.open);
+            setDebug("Host: convidado detectado, open=" + connection.open);
             conn = connection;
             configurarConexao(conn);
 
-            const iniciarJogoHost = () => {
-                console.log("[Host] conexão confirmada, iniciando jogo");
-                conexaoEstabelecida = true;
-                multiplayerAtivo = true;
-                modoJogo = "pvp";
-                nomeJ1 = "Host (X)";
-                nomeJ2 = "Convidado (O)";
-                quemComeca = simboloJ1;
-                placar = { j1: 0, empate: 0, j2: 0 };
-                versaoEstado = 0;
-                mostrarTela(telaJogo);
-                iniciarPartida();
-
-                // Envia o estado inicial várias vezes para compensar possíveis
-                // problemas de timing na abertura do canal de dados.
-                enviarEstadoInicial();
-                setTimeout(enviarEstadoInicial, 300);
-                setTimeout(enviarEstadoInicial, 1000);
-                setTimeout(enviarEstadoInicial, 2000);
-
-                if (statusConexaoEl) statusConexaoEl.textContent = "Conectado!";
-            };
-
-            // Compatível com versões do PeerJS em que "connection" já dispara
-            // com open=true (e o evento "open" não dispararia novamente).
-            if (connection.open) {
-                iniciarJogoHost();
-            } else {
-                connection.on("open", iniciarJogoHost);
-            }
+            if (pollingConexao) clearInterval(pollingConexao);
+            pollingConexao = setInterval(() => {
+                if (connection.open) {
+                    clearInterval(pollingConexao);
+                    pollingConexao = null;
+                    setDebug("Host: conexão aberta, iniciando jogo");
+                    iniciarJogoHost();
+                }
+            }, 150);
         });
     });
 
     peer.on("error", (err) => {
         console.error("[Host] Erro PeerJS:", err);
+        setDebug("Host erro: " + (err.type || err));
         if (err.type === "unavailable-id" && tentativa < 5) {
             try { peer.destroy(); } catch (e) {}
             peer = null;
-            if (statusConexaoEl) statusConexaoEl.textContent = "Gerando novo código...";
             setTimeout(() => iniciarHost(tentativa + 1), 300);
             return;
         }
-        if (statusConexaoEl) statusConexaoEl.textContent = "Erro: " + (err.type || err);
     });
+}
+
+function iniciarJogoHost() {
+    conexaoEstabelecida = true;
+    multiplayerAtivo = true;
+    modoJogo = "pvp";
+    nomeJ1 = "Host (X)";
+    nomeJ2 = "Convidado (O)";
+    quemComeca = simboloJ1;
+    placar = { j1: 0, empate: 0, j2: 0 };
+    versaoEstado = 0;
+    mostrarTela(telaJogo);
+    iniciarPartida();
+
+    // Envia estado_inicial até o cliente confirmar com ACK
+    let tentativas = 0;
+    const enviarAteAck = () => {
+        tentativas++;
+        const enviado = enviarEstadoInicial();
+        setDebug("Host: estado_inicial enviado (tentativa " + tentativas + ", ok=" + enviado + ")");
+        if (tentativas >= 8) {
+            if (intervalReenviarEstado) {
+                clearInterval(intervalReenviarEstado);
+                intervalReenviarEstado = null;
+            }
+        }
+    };
+    enviarAteAck();
+    if (intervalReenviarEstado) clearInterval(intervalReenviarEstado);
+    intervalReenviarEstado = setInterval(enviarAteAck, 500);
 }
 
 // --------------------------------------------------------------
@@ -321,7 +351,7 @@ function iniciarHost(tentativa = 0) {
 // --------------------------------------------------------------
 function entrarNaSala(codigoDigitado) {
     if (typeof Peer === "undefined") {
-        if (statusConexaoEl) statusConexaoEl.textContent = "PeerJS não carregou. Verifique a conexão.";
+        setDebug("ERRO: PeerJS não carregou.");
         return;
     }
 
@@ -333,40 +363,52 @@ function entrarNaSala(codigoDigitado) {
 
     const peerId = PREFIXO_PEER + codigo;
     peer = new Peer({ config: CONFIG_ICE });
-
-    if (statusConexaoEl) statusConexaoEl.textContent = "Conectando ao host...";
-    console.log("[Cliente] conectando ao peer", peerId);
+    setDebug("Cliente: conectando a " + peerId);
 
     peer.on("open", () => {
+        setDebug("Cliente: peer conectado, abrindo DataConnection...");
         conn = peer.connect(peerId, { reliable: true });
         configurarConexao(conn);
 
-        const marcarConectado = () => {
-            console.log("[Cliente] conexão com o host aberta");
-            isHost = false;
-            conexaoEstabelecida = true;
-            if (statusConexaoEl) statusConexaoEl.textContent = "Conectado ao host!";
+        if (pollingConexao) clearInterval(pollingConexao);
+        let tentativas = 0;
+        pollingConexao = setInterval(() => {
+            tentativas++;
+            if (conn && conn.open) {
+                clearInterval(pollingConexao);
+                pollingConexao = null;
+                setDebug("Cliente: DataConnection aberta!");
+                isHost = false;
+                conexaoEstabelecida = true;
+                if (statusConexaoEl) statusConexaoEl.textContent = "Conectado! Aguardando estado...";
 
-            // Fallback: se não chegar estado_inicial em 3s, solicita
-            timeoutSolicitarEstado = setTimeout(() => {
-                if (!multiplayerAtivo && conn && conn.open) {
-                    console.log("[Cliente] timeout sem estado_inicial, solicitando");
-                    conn.send({ tipo: "solicitar_estado" });
-                    if (statusConexaoEl) statusConexaoEl.textContent = "Solicitando estado...";
-                }
-            }, 3000);
-        };
+                if (timeoutSolicitarEstado) clearTimeout(timeoutSolicitarEstado);
+                timeoutSolicitarEstado = setTimeout(() => {
+                    if (!estadoInicialAplicado && conn && conn.open) {
+                        setDebug("Cliente: pedindo estado inicial (solicitar_estado)");
+                        conn.send({ tipo: "solicitar_estado" });
+                    }
+                }, 2000);
+            } else if (tentativas > 100) {
+                clearInterval(pollingConexao);
+                pollingConexao = null;
+                setDebug("Cliente: TIMEOUT aguardando DataConnection abrir.");
+            }
+        }, 150);
 
-        if (conn.open) marcarConectado();
-        else conn.on("open", marcarConectado);
+        if (timeoutConexao) clearTimeout(timeoutConexao);
+        timeoutConexao = setTimeout(() => {
+            if (!estadoInicialAplicado) {
+                setDebug("Cliente: TIMEOUT global sem receber estado inicial.");
+            }
+        }, 20000);
     });
 
     peer.on("error", (err) => {
         console.error("[Cliente] Erro PeerJS:", err);
+        setDebug("Cliente erro: " + (err.type || err));
         if (err.type === "peer-unavailable") {
             if (statusConexaoEl) statusConexaoEl.textContent = "Código não encontrado. Confira com o host.";
-        } else {
-            if (statusConexaoEl) statusConexaoEl.textContent = "Erro: " + (err.type || err);
         }
     });
 }
@@ -377,19 +419,26 @@ function entrarNaSala(codigoDigitado) {
 function configurarConexao(connection) {
     connection.on("data", (data) => {
         if (!data || !data.tipo) return;
-        console.log("[Rede] recebido:", data.tipo, data.versao != null ? "v" + data.versao : "");
+        setDebug("Recebido: " + data.tipo + (data.versao != null ? " v" + data.versao : ""));
 
         if (data.tipo === "estado_inicial") {
-            // Idempotência: ignora versões antigas depois que o jogo começou
-            if (multiplayerAtivo && !isHost && data.versao <= ultimaVersaoRecebida) {
-                console.log("[Cliente] estado_inicial antigo, ignorando");
-                return;
+            // No cliente: só aplica se a versão for mais nova que a última aplicada
+            if (!isHost) {
+                if (data.versao <= ultimaVersaoRecebida) {
+                    setDebug("Cliente: estado v" + data.versao + " antigo, ignorando (atual v" + ultimaVersaoRecebida + ")");
+                    return;
+                }
+                ultimaVersaoRecebida = data.versao;
             }
-            ultimaVersaoRecebida = data.versao;
 
+            estadoInicialAplicado = true;
             if (timeoutSolicitarEstado) {
                 clearTimeout(timeoutSolicitarEstado);
                 timeoutSolicitarEstado = null;
+            }
+            if (timeoutConexao) {
+                clearTimeout(timeoutConexao);
+                timeoutConexao = null;
             }
 
             tabuleiro = data.tabuleiro.slice();
@@ -404,21 +453,29 @@ function configurarConexao(connection) {
             mostrarTela(telaJogo);
             atualizarInterfaceCompleta();
             if (statusConexaoEl) statusConexaoEl.textContent = "Conectado ao host!";
-            console.log("[Cliente] estado_inicial aplicado (v" + data.versao + ")");
+
+            if (!isHost && conn && conn.open) {
+                try { conn.send({ tipo: "ack_estado", versao: data.versao }); } catch (e) {}
+            }
+
+        } else if (data.tipo === "ack_estado") {
+            if (isHost && intervalReenviarEstado) {
+                clearInterval(intervalReenviarEstado);
+                intervalReenviarEstado = null;
+                setDebug("Host: cliente confirmou v" + data.versao + ". Parando reenvios.");
+            }
 
         } else if (data.tipo === "jogada") {
             if (isHost) {
                 if (tabuleiro[data.index] === "" && !jogoAcabou && data.simbolo === turnoAtual) {
-                    aplicarJogada(data.index, data.simbolo);
-                    if (conn && conn.open) {
-                        conn.send({ tipo: "jogada_confirmada", index: data.index, simbolo: data.simbolo });
-                    }
+                    aplicarJogadaLocal(data.index, data.simbolo);
+                    versaoEstado++;
+                    enviarEstadoInicial();
+                } else {
+                    // Rejeitada: reenvia estado atual para o cliente se corrigir
+                    setDebug("Host: jogada rejeitada, reenviando estado");
+                    enviarEstadoInicial();
                 }
-            }
-
-        } else if (data.tipo === "jogada_confirmada") {
-            if (!isHost) {
-                aplicarJogada(data.index, data.simbolo);
             }
 
         } else if (data.tipo === "reiniciar") {
@@ -426,34 +483,28 @@ function configurarConexao(connection) {
 
         } else if (data.tipo === "solicitar_estado") {
             if (isHost) {
-                console.log("[Host] cliente solicitou estado, reenviando");
+                setDebug("Host: cliente pediu estado, reenviando");
                 enviarEstadoInicial();
             }
         }
     });
 
     connection.on("close", () => {
-        console.log("[Rede] conexão encerrada");
+        setDebug("Conexão encerrada.");
         if (statusConexaoEl) statusConexaoEl.textContent = "Conexão encerrada.";
         multiplayerAtivo = false;
         conexaoEstabelecida = false;
+        estadoInicialAplicado = false;
     });
 
     connection.on("error", (err) => {
-        console.error("[Rede] erro na conexão:", err);
-        if (statusConexaoEl) statusConexaoEl.textContent = "Erro na conexão.";
+        console.error("[Rede] erro:", err);
+        setDebug("Erro na conexão: " + (err && err.message ? err.message : err));
     });
 }
 
 function enviarEstadoInicial() {
-    if (!conn) {
-        console.log("[Host] enviarEstadoInicial: conn nulo");
-        return false;
-    }
-    if (!conn.open) {
-        console.log("[Host] enviarEstadoInicial: conn não aberto");
-        return false;
-    }
+    if (!conn || !conn.open) return false;
     try {
         conn.send({
             tipo: "estado_inicial",
@@ -465,10 +516,8 @@ function enviarEstadoInicial() {
             nomes: { j1: nomeJ1, j2: nomeJ2 },
             placar: { ...placar }
         });
-        console.log("[Host] estado_inicial enviado (v" + versaoEstado + ")");
         return true;
     } catch (e) {
-        console.error("[Host] erro ao enviar estado_inicial:", e);
         return false;
     }
 }
@@ -504,24 +553,33 @@ function jogarNaCelula(index) {
 
     if (multiplayerAtivo) {
         if (!conexaoEstabelecida) return;
+
         if (isHost) {
+            // Host só joga X
             if (turnoAtual !== simboloJ1) return;
-            aplicarJogada(index, turnoAtual);
-            if (conn && conn.open) {
-                conn.send({ tipo: "jogada_confirmada", index: index, simbolo: turnoAtual });
-            }
+            const simboloJogado = turnoAtual;   // captura ANTES de aplicar (evita bug)
+            aplicarJogadaLocal(index, simboloJogado);
+            versaoEstado++;
+            enviarEstadoInicial();
+
         } else {
+            // Cliente só joga O
             if (turnoAtual !== simboloJ2) return;
+            const simboloJogado = turnoAtual;
+            // Otimista: aplica local e envia. Se o host rejeitar, o próximo
+            // estado_inicial vai sobrescrever com a verdade do host.
+            aplicarJogadaLocal(index, simboloJogado);
             if (conn && conn.open) {
-                conn.send({ tipo: "jogada", index: index, simbolo: turnoAtual });
+                conn.send({ tipo: "jogada", index: index, simbolo: simboloJogado });
             }
         }
     } else {
-        aplicarJogada(index, turnoAtual);
+        aplicarJogadaLocal(index, turnoAtual);
     }
 }
 
-function aplicarJogada(index, simbolo) {
+// Aplica no tabuleiro local (sem propagar para a rede)
+function aplicarJogadaLocal(index, simbolo) {
     if (tabuleiro[index] !== "") return;
     tabuleiro[index] = simbolo;
     tocarSomJogada();
@@ -545,15 +603,12 @@ function jogadaComputador() {
     const jogada = nivelDificuldade === "medio"
         ? escolherJogadaAleatoria()
         : encontrarMelhorJogada();
-
     if (jogada == null || jogada < 0) return;
-    aplicarJogada(jogada, simboloJ2);
+    aplicarJogadaLocal(jogada, simboloJ2);
 }
 
 function escolherJogadaAleatoria() {
-    const vazias = tabuleiro
-        .map((v, i) => (v === "" ? i : null))
-        .filter(i => i !== null);
+    const vazias = tabuleiro.map((v, i) => (v === "" ? i : null)).filter(i => i !== null);
     return vazias[Math.floor(Math.random() * vazias.length)];
 }
 
@@ -565,10 +620,7 @@ function encontrarMelhorJogada() {
             tabuleiro[i] = simboloJ2;
             const p = minimax(tabuleiro, 0, false);
             tabuleiro[i] = "";
-            if (p > melhorPontuacao) {
-                melhorPontuacao = p;
-                melhorIndex = i;
-            }
+            if (p > melhorPontuacao) { melhorPontuacao = p; melhorIndex = i; }
         }
     }
     return melhorIndex;
@@ -578,7 +630,6 @@ function minimax(tab, profundidade, estaMaximizando) {
     if (verificarVitoriaEm(tab, simboloJ2)) return 10 - profundidade;
     if (verificarVitoriaEm(tab, simboloJ1)) return profundidade - 10;
     if (!tab.includes("")) return 0;
-
     if (estaMaximizando) {
         let melhor = -Infinity;
         for (let i = 0; i < tab.length; i++) {
@@ -629,9 +680,7 @@ function encontrarCombinacaoVencedora(jogador) {
 function destacarVitoria(combinacao) {
     if (!tabuleiroEl) return;
     const celulas = tabuleiroEl.querySelectorAll(".celula");
-    combinacao.forEach(i => {
-        if (celulas[i]) celulas[i].classList.add("vencedora");
-    });
+    combinacao.forEach(i => { if (celulas[i]) celulas[i].classList.add("vencedora"); });
 }
 
 function iniciarConfete() {
@@ -658,9 +707,7 @@ function iniciarConfete() {
     function animar() {
         ctx.clearRect(0, 0, canvasConfeteEl.width, canvasConfeteEl.height);
         particulas.forEach(p => {
-            p.y += p.velocidadeY;
-            p.x += p.velocidadeX;
-            p.rotacao += p.velocidadeRotacao;
+            p.y += p.velocidadeY; p.x += p.velocidadeX; p.rotacao += p.velocidadeRotacao;
             ctx.save();
             ctx.translate(p.x, p.y);
             ctx.rotate((p.rotacao * Math.PI) / 180);
@@ -668,11 +715,8 @@ function iniciarConfete() {
             ctx.fillRect(-p.tamanho / 2, -p.tamanho / 2, p.tamanho, p.tamanho * 0.6);
             ctx.restore();
         });
-        if (confeteAnimando && Date.now() - t0 < 3000) {
-            requestAnimationFrame(animar);
-        } else {
-            ctx.clearRect(0, 0, canvasConfeteEl.width, canvasConfeteEl.height);
-        }
+        if (confeteAnimando && Date.now() - t0 < 3000) requestAnimationFrame(animar);
+        else ctx.clearRect(0, 0, canvasConfeteEl.width, canvasConfeteEl.height);
     }
     animar();
 }
@@ -739,24 +783,18 @@ function iniciarPartida() {
 }
 
 function reiniciarPartidaLocal() {
-    if (multiplayerAtivo && isHost) {
-        versaoEstado++;  // nova versão para o cliente aceitar
-    }
     quemComeca = quemComeca === simboloJ1 ? simboloJ2 : simboloJ1;
     iniciarPartida();
     if (multiplayerAtivo && isHost) {
-        setTimeout(enviarEstadoInicial, 100);
-        setTimeout(enviarEstadoInicial, 500);
+        versaoEstado++;
+        enviarEstadoInicial();
     }
 }
 
 if (botaoReiniciar) botaoReiniciar.addEventListener("click", () => {
     if (multiplayerAtivo) {
-        if (isHost) {
-            reiniciarPartidaLocal();
-        } else if (conn && conn.open) {
-            conn.send({ tipo: "reiniciar" });
-        }
+        if (isHost) reiniciarPartidaLocal();
+        else if (conn && conn.open) conn.send({ tipo: "reiniciar" });
     } else {
         quemComeca = quemComeca === simboloJ1 ? simboloJ2 : simboloJ1;
         iniciarPartida();
