@@ -1,4 +1,5 @@
 (() => {
+  console.log('✅ game.js CARREGADO — versão:', 'v5-items-fix');   // ⬅️ linha de teste
 /* ================= CONFIG ================= */
 const GRAV = 3.2;            // gravidade das frutas (baixa = mais flutuante)
 const START_LIVES = 3;
