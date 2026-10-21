@@ -212,6 +212,25 @@ function setDebug(msg) {
     if (el) el.textContent = msg;
 }
 
+// Painel fixo de estado no topo da tela de jogo (para confirmar visualmente)
+function atualizarPainelEstado() {
+    let el = document.getElementById("painelEstado");
+    if (!el && telaJogo) {
+        el = document.createElement("div");
+        el.id = "painelEstado";
+        el.style.cssText = "position:fixed;top:0;left:0;right:0;padding:6px 12px;background:rgba(0,0,0,0.75);color:#f9e2af;font-size:11px;font-family:monospace;z-index:99998;text-align:center;pointer-events:none;";
+        document.body.appendChild(el);
+    }
+    if (!el) return;
+    if (!multiplayerAtivo) {
+        el.textContent = "";
+        return;
+    }
+    const papel = isHost ? "HOST (X)" : "CONVIDADO (O)";
+    const t = tabuleiro.map(v => v || ".").join("");
+    el.textContent = `${papel} | tab=${t} | turno=${turnoAtual} | v=${isHost ? versaoEstado : ultimaVersaoRecebida}`;
+}
+
 if (inputIdSala) {
     inputIdSala.maxLength = TAMANHO_CODIGO;
     inputIdSala.placeholder = `Código de ${TAMANHO_CODIGO} caracteres`;
@@ -240,6 +259,7 @@ function destruirConexao() {
     estadoInicialAplicado = false;
     versaoEstado = 0;
     ultimaVersaoRecebida = -1;
+    atualizarPainelEstado();
 }
 
 if (btnJogarOnline) btnJogarOnline.addEventListener("click", () => {
@@ -327,8 +347,8 @@ function iniciarJogoHost() {
     versaoEstado = 0;
     mostrarTela(telaJogo);
     iniciarPartida();
+    atualizarPainelEstado();
 
-    // Envia estado_inicial até o cliente confirmar com ACK
     let tentativas = 0;
     const enviarAteAck = () => {
         tentativas++;
@@ -422,14 +442,13 @@ function configurarConexao(connection) {
         setDebug("Recebido: " + data.tipo + (data.versao != null ? " v" + data.versao : ""));
 
         if (data.tipo === "estado_inicial") {
-            // No cliente: só aplica se a versão for mais nova que a última aplicada
-            if (!isHost) {
-                if (data.versao <= ultimaVersaoRecebida) {
-                    setDebug("Cliente: estado v" + data.versao + " antigo, ignorando (atual v" + ultimaVersaoRecebida + ")");
-                    return;
-                }
-                ultimaVersaoRecebida = data.versao;
+            // Cliente: só aplica se versão >= última recebida (>= permite reaplicar
+            // o mesmo estado, útil para corrigir uma jogada otimista antiga)
+            if (!isHost && data.versao < ultimaVersaoRecebida) {
+                setDebug("Cliente: estado v" + data.versao + " antigo, ignorando (atual v" + ultimaVersaoRecebida + ")");
+                return;
             }
+            if (!isHost) ultimaVersaoRecebida = data.versao;
 
             estadoInicialAplicado = true;
             if (timeoutSolicitarEstado) {
@@ -467,12 +486,17 @@ function configurarConexao(connection) {
 
         } else if (data.tipo === "jogada") {
             if (isHost) {
-                if (tabuleiro[data.index] === "" && !jogoAcabou && data.simbolo === turnoAtual) {
-                    aplicarJogadaLocal(data.index, data.simbolo);
+                // Host é a ÚNICA fonte da verdade. Só aplica se a célula está
+                // vazia, é o turno do cliente (O), e o jogo não terminou.
+                const podeAplicar =
+                    tabuleiro[data.index] === "" &&
+                    !jogoAcabou &&
+                    turnoAtual === simboloJ2;
+                if (podeAplicar) {
+                    aplicarJogadaLocal(data.index, simboloJ2);
                     versaoEstado++;
                     enviarEstadoInicial();
                 } else {
-                    // Rejeitada: reenvia estado atual para o cliente se corrigir
                     setDebug("Host: jogada rejeitada, reenviando estado");
                     enviarEstadoInicial();
                 }
@@ -495,6 +519,7 @@ function configurarConexao(connection) {
         multiplayerAtivo = false;
         conexaoEstabelecida = false;
         estadoInicialAplicado = false;
+        atualizarPainelEstado();
     });
 
     connection.on("error", (err) => {
@@ -530,6 +555,7 @@ function atualizarInterfaceCompleta() {
     if (placarPontos2El) placarPontos2El.textContent = placar.j2;
     criarTabuleiro();
     atualizarMensagemTurno();
+    atualizarPainelEstado();
 }
 
 // ---------------- TABULEIRO ----------------
@@ -555,22 +581,21 @@ function jogarNaCelula(index) {
         if (!conexaoEstabelecida) return;
 
         if (isHost) {
-            // Host só joga X
+            // HOST: só joga X. Aplica localmente e envia o estado completo.
             if (turnoAtual !== simboloJ1) return;
-            const simboloJogado = turnoAtual;   // captura ANTES de aplicar (evita bug)
+            const simboloJogado = turnoAtual;
             aplicarJogadaLocal(index, simboloJogado);
             versaoEstado++;
             enviarEstadoInicial();
 
         } else {
-            // Cliente só joga O
+            // CLIENTE: NÃO aplica localmente. Só pede ao host.
+            // Isso evita a janela em que o cliente mostra O numa célula
+            // que o host já marcou com X.
             if (turnoAtual !== simboloJ2) return;
-            const simboloJogado = turnoAtual;
-            // Otimista: aplica local e envia. Se o host rejeitar, o próximo
-            // estado_inicial vai sobrescrever com a verdade do host.
-            aplicarJogadaLocal(index, simboloJogado);
             if (conn && conn.open) {
-                conn.send({ tipo: "jogada", index: index, simbolo: simboloJogado });
+                setDebug("Cliente: enviando jogada (célula " + index + ")");
+                conn.send({ tipo: "jogada", index: index });
             }
         }
     } else {
@@ -585,7 +610,10 @@ function aplicarJogadaLocal(index, simbolo) {
     tocarSomJogada();
     criarTabuleiro();
 
-    if (verificarFimDeJogo(simbolo)) return;
+    if (verificarFimDeJogo(simbolo)) {
+        atualizarPainelEstado();
+        return;
+    }
 
     turnoAtual = turnoAtual === simboloJ1 ? simboloJ2 : simboloJ1;
 
@@ -595,6 +623,7 @@ function aplicarJogadaLocal(index, simbolo) {
     } else {
         atualizarMensagemTurno();
     }
+    atualizarPainelEstado();
 }
 
 // ---------------- IA ----------------
@@ -773,6 +802,7 @@ function iniciarPartida() {
     turnoAtual = quemComeca;
     esconderVitoria();
     criarTabuleiro();
+    atualizarPainelEstado();
 
     if (modoJogo === "pvc" && turnoAtual === simboloJ2) {
         if (mensagemEl) mensagemEl.textContent = "Computador começa...";
