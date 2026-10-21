@@ -156,11 +156,28 @@ let conn = null;
 let isHost = false;
 let salaId = null;
 let multiplayerAtivo = false;
+let conexaoEstabelecida = false;
 
 // --- Código curto de sala ---
 const CARACTERES_SALA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sem 0/O/1/I/l
-const TAMANHO_CODIGO  = 6;         // troque para 8 se quiser mais segurança
-const PREFIXO_PEER    = "jdv-vr-"; // invisível ao usuário, evita colisão global
+const TAMANHO_CODIGO  = 6;
+const PREFIXO_PEER    = "jdv-vr-";
+
+// --- Configuração de rede (STUN/TURN) ---
+// Os STUN públicos ajudam o WebRTC a descobrir o endereço externo dos dois
+// dispositivos. Em redes muito restritivas, seria necessário um servidor TURN.
+const CONFIG_ICE = {
+    iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" },
+        { urls: "stun:stun.cloudflare.com:3478" },
+        { urls: "stun:stun.services.mozilla.com" }
+    ],
+    iceCandidatePoolSize: 10
+};
 
 function gerarCodigoSala() {
     let codigo = "";
@@ -195,6 +212,7 @@ function destruirConexao() {
     if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
     multiplayerAtivo = false;
     isHost = false;
+    conexaoEstabelecida = false;
 }
 
 if (btnJogarOnline) btnJogarOnline.addEventListener("click", () => {
@@ -228,7 +246,7 @@ function iniciarHost(tentativa = 0) {
     const codigo = gerarCodigoSala();
     const peerId = PREFIXO_PEER + codigo;
 
-    peer = new Peer(peerId);
+    peer = new Peer(peerId, { config: CONFIG_ICE });
 
     peer.on("open", () => {
         salaId = codigo;
@@ -239,16 +257,22 @@ function iniciarHost(tentativa = 0) {
         peer.on("connection", (connection) => {
             conn = connection;
             configurarConexao(conn);
-            multiplayerAtivo = true;
-            modoJogo = "pvp";
-            nomeJ1 = "Host (X)";
-            nomeJ2 = "Convidado (O)";
-            quemComeca = simboloJ1;
-            placar = { j1: 0, empate: 0, j2: 0 };
-            mostrarTela(telaJogo);
-            iniciarPartida();
-            enviarEstadoInicial();
-            if (statusConexaoEl) statusConexaoEl.textContent = "Conectado!";
+            if (statusConexaoEl) statusConexaoEl.textContent = "Conectando...";
+
+            // Inicia o jogo somente quando a conexão estiver realmente aberta
+            conn.on("open", () => {
+                conexaoEstabelecida = true;
+                multiplayerAtivo = true;
+                modoJogo = "pvp";
+                nomeJ1 = "Host (X)";
+                nomeJ2 = "Convidado (O)";
+                quemComeca = simboloJ1;
+                placar = { j1: 0, empate: 0, j2: 0 };
+                mostrarTela(telaJogo);
+                iniciarPartida();
+                enviarEstadoInicial();
+                if (statusConexaoEl) statusConexaoEl.textContent = "Conectado!";
+            });
         });
     });
 
@@ -279,13 +303,18 @@ function entrarNaSala(codigoDigitado) {
     }
 
     const peerId = PREFIXO_PEER + codigo;
-    peer = new Peer();
+    peer = new Peer({ config: CONFIG_ICE });
+
+    if (statusConexaoEl) statusConexaoEl.textContent = "Conectando ao host...";
 
     peer.on("open", () => {
         conn = peer.connect(peerId, { reliable: true });
+
         configurarConexao(conn);
+
         conn.on("open", () => {
             isHost = false;
+            conexaoEstabelecida = true;
             if (statusConexaoEl) statusConexaoEl.textContent = "Conectado ao host!";
         });
     });
@@ -294,8 +323,8 @@ function entrarNaSala(codigoDigitado) {
         console.error("Erro PeerJS (Cliente):", err);
         if (err.type === "peer-unavailable") {
             if (statusConexaoEl) statusConexaoEl.textContent = "Código não encontrado. Confira com o host.";
-        } else if (statusConexaoEl) {
-            statusConexaoEl.textContent = "Erro: " + (err.type || err);
+        } else {
+            if (statusConexaoEl) statusConexaoEl.textContent = "Erro: " + (err.type || err);
         }
     });
 }
@@ -340,6 +369,12 @@ function configurarConexao(connection) {
     connection.on("close", () => {
         if (statusConexaoEl) statusConexaoEl.textContent = "Conexão encerrada.";
         multiplayerAtivo = false;
+        conexaoEstabelecida = false;
+    });
+
+    connection.on("error", (err) => {
+        console.error("Erro na conexão:", err);
+        if (statusConexaoEl) statusConexaoEl.textContent = "Erro na conexão.";
     });
 }
 
@@ -386,12 +421,17 @@ function jogarNaCelula(index) {
     if (modoJogo === "pvc" && turnoAtual !== simboloJ1) return;
 
     if (multiplayerAtivo) {
+        if (!conexaoEstabelecida) return;
         if (isHost) {
+            // No online, cada um só pode jogar o próprio símbolo
+            if (turnoAtual !== simboloJ1) return;
             aplicarJogada(index, turnoAtual);
             if (conn && conn.open) {
                 conn.send({ tipo: "jogada_confirmada", index: index, simbolo: turnoAtual });
             }
         } else {
+            // Convidado joga como O
+            if (turnoAtual !== simboloJ2) return;
             if (conn && conn.open) {
                 conn.send({ tipo: "jogada", index: index, simbolo: turnoAtual });
             }
