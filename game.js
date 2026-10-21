@@ -70,7 +70,7 @@ function drawHud() {
     hx.fillStyle = '#ffd54f'; hx.font = 'bold 52px sans-serif';
     hx.fillText(combo > 1 ? 'COMBO x' + combo : '', 384, 320);
   } else if (state === 'menu') {
-    hx.font = 'bold 72px sans-serif'; hx.fillText('FRUIT SABER VR', 384, 120);
+    hx.font = 'bold 72px sans-serif'; hx.fillText('CORTAR FRUTAS COM VR', 384, 120);
     hx.font = '42px sans-serif'; hx.fillStyle = '#00e5ff';
     hx.fillText('Corte a MELANCIA para começar', 384, 205);
     hx.fillStyle = '#ff4d6d'; hx.fillText('Nunca toque nas BOMBAS pretas!', 384, 275);
