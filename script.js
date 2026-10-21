@@ -1,8 +1,8 @@
 // ============================================================
-// JOGO DA VELHA — VERSAO 5.2
-// v5.2: banner fixo de resultado + nomes personalizados no online
+// JOGO DA VELHA — VERSAO 5.3
+// v5.3: remove modo PvP local; nome agora vem do HTML (fixo)
 // ============================================================
-const VERSAO_CODIGO = "5.2";
+const VERSAO_CODIGO = "5.3";
 console.log("%c=== JOGO DA VELHA " + VERSAO_CODIGO + " ===", "color:cyan;font-size:16px;font-weight:bold");
 
 // ---------------- ESTADO ----------------
@@ -43,13 +43,11 @@ const telaJogo   = document.getElementById("telaJogo");
 const telaOnline = document.getElementById("telaOnline");
 
 const btnEscolherPvc = document.getElementById("btnEscolherPvc");
-const btnEscolherPvp = document.getElementById("btnEscolherPvp");
 const btnJogarOnline = document.getElementById("btnJogarOnline");
 const btnNivelMedio   = document.getElementById("btnNivelMedio");
 const btnNivelDificil = document.getElementById("btnNivelDificil");
 const tituloConfig = document.getElementById("tituloConfig");
 const inputNome1   = document.getElementById("nomeJogador1");
-const inputNome2   = document.getElementById("nomeJogador2");
 const botaoComecar = document.getElementById("botaoComecar");
 
 const tabuleiroWrapperEl = document.getElementById("tabuleiroWrapper");
@@ -73,27 +71,13 @@ const statusConexaoEl     = document.getElementById("statusConexao");
 const inputIdSala         = document.getElementById("inputIdSala");
 const btnEntrarSala       = document.getElementById("btnEntrarSala");
 const btnVoltarMenuOnline = document.getElementById("btnVoltarMenuOnline");
+const inputNomeOnline     = document.getElementById("nomeJogadorOnline");
 
 let confeteAnimando = false;
 
-// ---------------- INJETAR INPUT DE NOME NA TELA ONLINE ----------------
-(function injetarCampoNome() {
-    if (document.getElementById("nomeJogadorOnline")) return;
-    const intro = telaOnline && telaOnline.querySelector("p");
-    if (!intro) return;
-    const wrap = document.createElement("div");
-    wrap.style.cssText = "width:100%;margin:0 0 16px;text-align:center;";
-    wrap.innerHTML =
-        '<label style="display:block;font-size:13px;color:#9494b0;margin-bottom:8px;font-weight:600;">Seu nome (opcional)</label>' +
-        '<input type="text" id="nomeJogadorOnline" placeholder="Ex: João" maxlength="20" ' +
-        'style="width:100%;padding:14px 18px;border-radius:10px;border:1px solid rgba(255,255,255,0.15);' +
-        'background:rgba(30,30,60,0.55);color:#e8e8f0;font-size:16px;text-align:center;font-family:inherit;box-sizing:border-box;">';
-    intro.parentNode.insertBefore(wrap, intro.nextSibling);
-})();
-
+// ---------------- NOMES ----------------
 function getNomeOnline(fallback) {
-    const el = document.getElementById("nomeJogadorOnline");
-    const v = el ? el.value.trim() : "";
+    const v = inputNomeOnline ? inputNomeOnline.value.trim() : "";
     return v || fallback;
 }
 
@@ -104,33 +88,22 @@ function mostrarTela(tela) {
 }
 
 if (btnEscolherPvc) btnEscolherPvc.addEventListener("click", () => { modoJogo = "pvc"; mostrarTela(telaNivel); });
-if (btnEscolherPvp) btnEscolherPvp.addEventListener("click", () => {
-    modoJogo = "pvp";
-    if (tituloConfig) tituloConfig.textContent = "Digite os nomes dos jogadores";
-    if (inputNome2) inputNome2.classList.remove("escondido");
-    mostrarTela(telaConfig);
-});
+
 if (btnNivelMedio) btnNivelMedio.addEventListener("click", () => {
     nivelDificuldade = "medio";
     if (tituloConfig) tituloConfig.textContent = "Digite seu nome";
-    if (inputNome2) inputNome2.classList.add("escondido");
     mostrarTela(telaConfig);
 });
 if (btnNivelDificil) btnNivelDificil.addEventListener("click", () => {
     nivelDificuldade = "dificil";
     if (tituloConfig) tituloConfig.textContent = "Digite seu nome";
-    if (inputNome2) inputNome2.classList.add("escondido");
     mostrarTela(telaConfig);
 });
+
 if (botaoComecar) botaoComecar.addEventListener("click", () => {
     const v1 = inputNome1 ? inputNome1.value.trim() : "";
     nomeJ1 = v1 === "" ? "Jogador 1" : v1;
-    if (modoJogo === "pvp") {
-        const v2 = inputNome2 ? inputNome2.value.trim() : "";
-        nomeJ2 = v2 === "" ? "Jogador 2" : v2;
-    } else {
-        nomeJ2 = nivelDificuldade === "medio" ? "Computador (Médio)" : "Computador (Difícil)";
-    }
+    nomeJ2 = nivelDificuldade === "medio" ? "Computador (Médio)" : "Computador (Difícil)";
     if (placarNome1El) placarNome1El.textContent = nomeJ1;
     if (placarNome2El) placarNome2El.textContent = nomeJ2;
     placar = { j1: 0, empate: 0, j2: 0 };
@@ -141,6 +114,7 @@ if (botaoComecar) botaoComecar.addEventListener("click", () => {
     mostrarTela(telaJogo);
     iniciarPartida();
 });
+
 if (botaoVoltarMenu) botaoVoltarMenu.addEventListener("click", () => { esconderVitoria(); mostrarTela(telaMenu); });
 
 // ---------------- REDE / MULTIPLAYER ----------------
@@ -220,7 +194,6 @@ function atualizarPainelEstado() {
     el.textContent = `${papel} | v${VERSAO_CODIGO} | tab=${t} | turno=${turnoAtual} | estado=v${v}`;
 }
 
-// Banner fixo de resultado (garante visibilidade)
 function mostrarBannerResultado(texto, cor) {
     let banner = document.getElementById("bannerResultado");
     if (!banner) {
@@ -294,6 +267,7 @@ function iniciarHost(tentativa = 0) {
     const codigo = gerarCodigoSala();
     const peerId = PREFIXO_PEER + codigo;
     setDebug("Host v" + VERSAO_CODIGO + ": criando peer " + peerId + " (nome: " + nomeHostAtual + ")");
+    console.log("[v" + VERSAO_CODIGO + "] HOST nome =", nomeHostAtual);
     peer = new Peer(peerId, { config: CONFIG_ICE });
 
     peer.on("open", () => {
@@ -301,11 +275,12 @@ function iniciarHost(tentativa = 0) {
         isHost = true;
         if (meuIdSalaEl) meuIdSalaEl.textContent = codigo;
         if (statusConexaoEl) statusConexaoEl.textContent = "Aguardando convidado...";
-        setDebug("Host: aguardando convidado (código " + codigo + ", meu nome: " + nomeHostAtual + ")");
+        setDebug("Host: aguardando convidado (código " + codigo + ")");
 
         peer.on("connection", (connection) => {
             const guestName = (connection.metadata && connection.metadata.nome) || "Convidado";
             nomeGuestAtual = guestName;
+            console.log("[v" + VERSAO_CODIGO + "] HOST recebeu convidado, nome =", guestName);
             setDebug("Host: convidado detectado (" + guestName + "), open=" + connection.open);
             conn = connection;
             configurarConexao(conn);
@@ -338,6 +313,7 @@ function iniciarJogoHost() {
     modoJogo = "pvp";
     nomeJ1 = nomeHostAtual;
     nomeJ2 = nomeGuestAtual;
+    console.log("[v" + VERSAO_CODIGO + "] HOST iniciando jogo:", nomeJ1, "vs", nomeJ2);
     quemComeca = simboloJ1;
     placar = { j1: 0, empate: 0, j2: 0 };
     versaoEstado = 0;
@@ -347,9 +323,7 @@ function iniciarJogoHost() {
 
     if (intervalHeartbeat) clearInterval(intervalHeartbeat);
     intervalHeartbeat = setInterval(() => {
-        if (multiplayerAtivo && isHost && conn && conn.open) {
-            enviarEstadoAtual();
-        }
+        if (multiplayerAtivo && isHost && conn && conn.open) enviarEstadoAtual();
     }, 800);
 
     enviarEstadoAtual();
@@ -368,7 +342,8 @@ function entrarNaSala(codigoDigitado) {
     const meuNome = getNomeOnline("Convidado");
     const peerId = PREFIXO_PEER + codigo;
     peer = new Peer({ config: CONFIG_ICE });
-    setDebug("Cliente v" + VERSAO_CODIGO + ": conectando a " + peerId + " (meu nome: " + meuNome + ")");
+    console.log("[v" + VERSAO_CODIGO + "] CLIENTE nome =", meuNome);
+    setDebug("Cliente v" + VERSAO_CODIGO + ": conectando a " + peerId + " (nome: " + meuNome + ")");
 
     peer.on("open", () => {
         setDebug("Cliente: peer conectado, abrindo DataConnection...");
@@ -422,11 +397,7 @@ function configurarConexao(connection) {
 
         if (data.tipo === "estado") {
             if (isHost) return;
-
-            if (data.versao < ultimaVersaoRecebida) {
-                setDebug("Cliente: estado v" + data.versao + " < v" + ultimaVersaoRecebida + ", ignorando");
-                return;
-            }
+            if (data.versao < ultimaVersaoRecebida) return;
             ultimaVersaoRecebida = data.versao;
 
             estadoInicialAplicado = true;
@@ -514,7 +485,6 @@ function atualizarInterfaceCompleta() {
     atualizarPainelEstado();
 }
 
-// FIX: exibe resultado no lado do convidado
 function exibirResultadoSeAcabou() {
     if (!jogoAcabou) {
         if (resultadoExibido) {
@@ -532,14 +502,14 @@ function exibirResultadoSeAcabou() {
         if (mensagemEl) mensagemEl.textContent = `${nomeJ1} venceu!`;
         tocarSomVitoria();
         mostrarVitoria(nomeJ1);
-        console.log("[v" + VERSAO_CODIGO + "] Resultado exibido no cliente: VITÓRIA " + nomeJ1);
+        console.log("[v" + VERSAO_CODIGO + "] Cliente: VITÓRIA " + nomeJ1);
     } else if (verificarVitoriaEm(tabuleiro, simboloJ2)) {
         const comb = encontrarCombinacaoVencedora(simboloJ2);
         destacarVitoria(comb);
         if (mensagemEl) mensagemEl.textContent = `${nomeJ2} venceu!`;
         tocarSomVitoria();
         mostrarVitoria(nomeJ2);
-        console.log("[v" + VERSAO_CODIGO + "] Resultado exibido no cliente: VITÓRIA " + nomeJ2);
+        console.log("[v" + VERSAO_CODIGO + "] Cliente: VITÓRIA " + nomeJ2);
     } else if (!tabuleiro.includes("")) {
         if (mensagemEl) mensagemEl.textContent = "Empate!";
         tocarSomEmpate();
@@ -654,7 +624,7 @@ function verificarVitoriaEm(tab, jog) {
 
 // ---------------- MENSAGENS / FIM ----------------
 function atualizarMensagemTurno() {
-    if (jogoAcabou) return;   // FIX: não sobrescreve mensagem de resultado
+    if (jogoAcabou) return;
     const nome = turnoAtual === simboloJ1 ? nomeJ1 : nomeJ2;
     if (mensagemEl) mensagemEl.textContent = `Vez de ${nome} (${turnoAtual})`;
 }
@@ -697,9 +667,9 @@ function mostrarVitoria(nome) {
     if (textoVitoriaEl) textoVitoriaEl.textContent = `🎉 ${nome} VENCEU! 🎉`;
     if (overlayVitoriaEl) {
         overlayVitoriaEl.classList.remove("escondido");
-        overlayVitoriaEl.style.display = "flex";   // força
+        overlayVitoriaEl.style.display = "flex";
         overlayVitoriaEl.style.background = "rgba(0,0,0,0.5)";
-        void overlayVitoriaEl.offsetHeight;        // força reflow
+        void overlayVitoriaEl.offsetHeight;
     }
     mostrarBannerResultado(`🎉 ${nome} VENCEU! 🎉`, "#a6e3a1");
     iniciarConfete();
