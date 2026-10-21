@@ -1,0 +1,8 @@
+html,body{margin:0;height:100%;background:#07031a;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}
+  canvas{position:fixed;inset:0;z-index:0}
+  #ui{position:fixed;inset:0;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:14px;text-align:center;padding:24px 24px 48px;pointer-events:none}
+  #ui>*{pointer-events:auto}
+  h1{margin:0;font-size:clamp(28px,6vw,56px);text-shadow:0 0 18px #00e5ff}
+  p{margin:0;max-width:520px;opacity:.85}
+  button{font-size:22px;font-weight:700;padding:16px 36px;border:0;border-radius:40px;color:#07031a;background:linear-gradient(90deg,#00e5ff,#ff2d95);cursor:pointer;box-shadow:0 0 24px #ff2d9588}
+  button:disabled{opacity:.45;cursor:not-allowed}
