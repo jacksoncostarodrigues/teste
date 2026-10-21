@@ -499,4 +499,266 @@ function criarTabuleiro() {
 }
 
 function jogarNaCelula(index) {
-    if (tabuleiro[index] !== "" || jogoAc
+    if (tabuleiro[index] !== "" || jogoAcabou) return;
+    if (modoJogo === "pvc" && turnoAtual !== simboloJ1) return;
+
+    if (multiplayerAtivo) {
+        if (!conexaoEstabelecida) return;
+        if (isHost) {
+            if (turnoAtual !== simboloJ1) return;
+            aplicarJogada(index, turnoAtual);
+            if (conn && conn.open) {
+                conn.send({ tipo: "jogada_confirmada", index: index, simbolo: turnoAtual });
+            }
+        } else {
+            if (turnoAtual !== simboloJ2) return;
+            if (conn && conn.open) {
+                conn.send({ tipo: "jogada", index: index, simbolo: turnoAtual });
+            }
+        }
+    } else {
+        aplicarJogada(index, turnoAtual);
+    }
+}
+
+function aplicarJogada(index, simbolo) {
+    if (tabuleiro[index] !== "") return;
+    tabuleiro[index] = simbolo;
+    tocarSomJogada();
+    criarTabuleiro();
+
+    if (verificarFimDeJogo(simbolo)) return;
+
+    turnoAtual = turnoAtual === simboloJ1 ? simboloJ2 : simboloJ1;
+
+    if (modoJogo === "pvc" && turnoAtual === simboloJ2) {
+        if (mensagemEl) mensagemEl.textContent = "Computador pensando...";
+        setTimeout(jogadaComputador, 600);
+    } else {
+        atualizarMensagemTurno();
+    }
+}
+
+// ---------------- IA ----------------
+function jogadaComputador() {
+    if (jogoAcabou) return;
+    const jogada = nivelDificuldade === "medio"
+        ? escolherJogadaAleatoria()
+        : encontrarMelhorJogada();
+
+    if (jogada == null || jogada < 0) return;
+    aplicarJogada(jogada, simboloJ2);
+}
+
+function escolherJogadaAleatoria() {
+    const vazias = tabuleiro
+        .map((v, i) => (v === "" ? i : null))
+        .filter(i => i !== null);
+    return vazias[Math.floor(Math.random() * vazias.length)];
+}
+
+function encontrarMelhorJogada() {
+    let melhorPontuacao = -Infinity;
+    let melhorIndex = -1;
+    for (let i = 0; i < tabuleiro.length; i++) {
+        if (tabuleiro[i] === "") {
+            tabuleiro[i] = simboloJ2;
+            const p = minimax(tabuleiro, 0, false);
+            tabuleiro[i] = "";
+            if (p > melhorPontuacao) {
+                melhorPontuacao = p;
+                melhorIndex = i;
+            }
+        }
+    }
+    return melhorIndex;
+}
+
+function minimax(tab, profundidade, estaMaximizando) {
+    if (verificarVitoriaEm(tab, simboloJ2)) return 10 - profundidade;
+    if (verificarVitoriaEm(tab, simboloJ1)) return profundidade - 10;
+    if (!tab.includes("")) return 0;
+
+    if (estaMaximizando) {
+        let melhor = -Infinity;
+        for (let i = 0; i < tab.length; i++) {
+            if (tab[i] === "") {
+                tab[i] = simboloJ2;
+                melhor = Math.max(melhor, minimax(tab, profundidade + 1, false));
+                tab[i] = "";
+            }
+        }
+        return melhor;
+    } else {
+        let pior = Infinity;
+        for (let i = 0; i < tab.length; i++) {
+            if (tab[i] === "") {
+                tab[i] = simboloJ1;
+                pior = Math.min(pior, minimax(tab, profundidade + 1, true));
+                tab[i] = "";
+            }
+        }
+        return pior;
+    }
+}
+
+function verificarVitoriaEm(tab, jogador) {
+    const combos = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],
+        [0, 4, 8], [2, 4, 6]
+    ];
+    return combos.some(c => c.every(i => tab[i] === jogador));
+}
+
+// ---------------- MENSAGENS / FIM ----------------
+function atualizarMensagemTurno() {
+    const nome = turnoAtual === simboloJ1 ? nomeJ1 : nomeJ2;
+    if (mensagemEl) mensagemEl.textContent = `Vez de ${nome} (${turnoAtual})`;
+}
+
+function encontrarCombinacaoVencedora(jogador) {
+    const combos = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],
+        [0, 4, 8], [2, 4, 6]
+    ];
+    return combos.find(c => c.every(i => tabuleiro[i] === jogador));
+}
+
+function destacarVitoria(combinacao) {
+    if (!tabuleiroEl) return;
+    const celulas = tabuleiroEl.querySelectorAll(".celula");
+    combinacao.forEach(i => {
+        if (celulas[i]) celulas[i].classList.add("vencedora");
+    });
+}
+
+function iniciarConfete() {
+    if (!canvasConfeteEl || !tabuleiroWrapperEl) return;
+    canvasConfeteEl.width = tabuleiroWrapperEl.offsetWidth;
+    canvasConfeteEl.height = tabuleiroWrapperEl.offsetHeight;
+    const ctx = canvasConfeteEl.getContext("2d");
+    const cores = ["#f38ba8", "#a6e3a1", "#89b4fa", "#f9e2af", "#cba6f7"];
+    const particulas = [];
+    for (let i = 0; i < 120; i++) {
+        particulas.push({
+            x: Math.random() * canvasConfeteEl.width,
+            y: -20 - Math.random() * canvasConfeteEl.height,
+            tamanho: 6 + Math.random() * 6,
+            cor: cores[Math.floor(Math.random() * cores.length)],
+            velocidadeY: 2 + Math.random() * 3,
+            velocidadeX: -1 + Math.random() * 2,
+            rotacao: Math.random() * 360,
+            velocidadeRotacao: -6 + Math.random() * 12
+        });
+    }
+    confeteAnimando = true;
+    const t0 = Date.now();
+    function animar() {
+        ctx.clearRect(0, 0, canvasConfeteEl.width, canvasConfeteEl.height);
+        particulas.forEach(p => {
+            p.y += p.velocidadeY;
+            p.x += p.velocidadeX;
+            p.rotacao += p.velocidadeRotacao;
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate((p.rotacao * Math.PI) / 180);
+            ctx.fillStyle = p.cor;
+            ctx.fillRect(-p.tamanho / 2, -p.tamanho / 2, p.tamanho, p.tamanho * 0.6);
+            ctx.restore();
+        });
+        if (confeteAnimando && Date.now() - t0 < 3000) {
+            requestAnimationFrame(animar);
+        } else {
+            ctx.clearRect(0, 0, canvasConfeteEl.width, canvasConfeteEl.height);
+        }
+    }
+    animar();
+}
+
+function mostrarVitoria(nome) {
+    if (textoVitoriaEl) textoVitoriaEl.textContent = `🎉 ${nome} VENCEU! 🎉`;
+    if (overlayVitoriaEl) overlayVitoriaEl.classList.remove("escondido");
+    iniciarConfete();
+}
+
+function esconderVitoria() {
+    confeteAnimando = false;
+    if (overlayVitoriaEl) overlayVitoriaEl.classList.add("escondido");
+}
+
+function verificarFimDeJogo(jogador) {
+    if (verificarVitoria(jogador)) {
+        const comb = encontrarCombinacaoVencedora(jogador);
+        destacarVitoria(comb);
+        tocarSomVitoria();
+        if (jogador === simboloJ1) {
+            if (mensagemEl) mensagemEl.textContent = `${nomeJ1} venceu!`;
+            placar.j1++;
+            if (placarPontos1El) placarPontos1El.textContent = placar.j1;
+            mostrarVitoria(nomeJ1);
+        } else {
+            if (mensagemEl) mensagemEl.textContent = `${nomeJ2} venceu!`;
+            placar.j2++;
+            if (placarPontos2El) placarPontos2El.textContent = placar.j2;
+            mostrarVitoria(nomeJ2);
+        }
+        jogoAcabou = true;
+        return true;
+    }
+    if (!tabuleiro.includes("")) {
+        if (mensagemEl) mensagemEl.textContent = "Empate!";
+        tocarSomEmpate();
+        placar.empate++;
+        if (placarEmpateEl) placarEmpateEl.textContent = placar.empate;
+        jogoAcabou = true;
+        return true;
+    }
+    return false;
+}
+
+function verificarVitoria(jogador) {
+    return verificarVitoriaEm(tabuleiro, jogador);
+}
+
+// ---------------- PARTIDA ----------------
+function iniciarPartida() {
+    tabuleiro = ["", "", "", "", "", "", "", "", ""];
+    jogoAcabou = false;
+    turnoAtual = quemComeca;
+    esconderVitoria();
+    criarTabuleiro();
+
+    if (modoJogo === "pvc" && turnoAtual === simboloJ2) {
+        if (mensagemEl) mensagemEl.textContent = "Computador começa...";
+        setTimeout(jogadaComputador, 600);
+    } else {
+        atualizarMensagemTurno();
+    }
+}
+
+function reiniciarPartidaLocal() {
+    if (multiplayerAtivo && isHost) {
+        versaoEstado++;  // nova versão para o cliente aceitar
+    }
+    quemComeca = quemComeca === simboloJ1 ? simboloJ2 : simboloJ1;
+    iniciarPartida();
+    if (multiplayerAtivo && isHost) {
+        setTimeout(enviarEstadoInicial, 100);
+        setTimeout(enviarEstadoInicial, 500);
+    }
+}
+
+if (botaoReiniciar) botaoReiniciar.addEventListener("click", () => {
+    if (multiplayerAtivo) {
+        if (isHost) {
+            reiniciarPartidaLocal();
+        } else if (conn && conn.open) {
+            conn.send({ tipo: "reiniciar" });
+        }
+    } else {
+        quemComeca = quemComeca === simboloJ1 ? simboloJ2 : simboloJ1;
+        iniciarPartida();
+    }
+});
