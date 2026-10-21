@@ -1,8 +1,8 @@
 // ============================================================
-// JOGO DA VELHA — VERSAO 5.0
-// Se este número aparecer no console, o código novo está rodando.
+// JOGO DA VELHA — VERSAO 5.1
+// v5.1 FIX: convidado agora vê mensagem de vitória/derrota/empate
 // ============================================================
-const VERSAO_CODIGO = "5.0";
+const VERSAO_CODIGO = "5.1";
 console.log("%c=== JOGO DA VELHA " + VERSAO_CODIGO + " ===", "color:cyan;font-size:16px;font-weight:bold");
 
 // ---------------- ESTADO ----------------
@@ -133,6 +133,7 @@ let estadoInicialAplicado = false;
 
 let versaoEstado = 0;
 let ultimaVersaoRecebida = -1;
+let resultadoExibido = false;   // v5.1 FIX
 
 let pollingConexao = null;
 let timeoutConexao = null;
@@ -223,6 +224,7 @@ function destruirConexao() {
     estadoInicialAplicado = false;
     versaoEstado = 0;
     ultimaVersaoRecebida = -1;
+    resultadoExibido = false;   // v5.1 FIX
     atualizarPainelEstado();
 }
 
@@ -293,10 +295,11 @@ function iniciarJogoHost() {
     quemComeca = simboloJ1;
     placar = { j1: 0, empate: 0, j2: 0 };
     versaoEstado = 0;
+    resultadoExibido = false;   // v5.1 FIX
     mostrarTela(telaJogo);
     iniciarPartida();
 
-    // Heartbeat: reenvia estado a cada 800ms (mantém o cliente sempre em sincronia)
+    // Heartbeat: reenvia estado a cada 800ms
     if (intervalHeartbeat) clearInterval(intervalHeartbeat);
     intervalHeartbeat = setInterval(() => {
         if (multiplayerAtivo && isHost && conn && conn.open) {
@@ -372,10 +375,8 @@ function configurarConexao(connection) {
         setDebug("Recebido: " + data.tipo + (data.versao != null ? " v" + data.versao : ""));
 
         if (data.tipo === "estado") {
-            // Só o cliente aplica estado recebido
             if (isHost) return;
 
-            // Aplica sempre se versão >= última (mesma versão reaplica, útil para corrigir)
             if (data.versao < ultimaVersaoRecebida) {
                 setDebug("Cliente: estado v" + data.versao + " < v" + ultimaVersaoRecebida + ", ignorando");
                 return;
@@ -386,7 +387,6 @@ function configurarConexao(connection) {
             if (timeoutSolicitarEstado) { clearTimeout(timeoutSolicitarEstado); timeoutSolicitarEstado = null; }
             if (timeoutConexao) { clearTimeout(timeoutConexao); timeoutConexao = null; }
 
-            // ATENÇÃO: substitui o tabuleiro inteiro, célula por célula
             tabuleiro = data.tabuleiro.slice();
             turnoAtual = data.turnoAtual;
             quemComeca = data.quemComeca;
@@ -399,11 +399,11 @@ function configurarConexao(connection) {
 
             mostrarTela(telaJogo);
             atualizarInterfaceCompleta();
+            exibirResultadoSeAcabou();   // v5.1 FIX
             if (statusConexaoEl) statusConexaoEl.textContent = "Conectado!";
             setDebug("Cliente: aplicado v" + data.versao + " tab=" + tabuleiro.join(""));
 
         } else if (data.tipo === "jogada") {
-            // Só o host processa jogadas
             if (!isHost) return;
 
             const podeAplicar =
@@ -473,6 +473,37 @@ function atualizarInterfaceCompleta() {
     atualizarPainelEstado();
 }
 
+// v5.1 FIX: exibe o resultado no lado do convidado quando o estado chega
+function exibirResultadoSeAcabou() {
+    if (!jogoAcabou) {
+        // Se uma partida nova começou, reseta o controle e esconde o overlay
+        if (resultadoExibido) {
+            resultadoExibido = false;
+            esconderVitoria();
+        }
+        return;
+    }
+    if (resultadoExibido) return;
+    resultadoExibido = true;
+
+    if (verificarVitoriaEm(tabuleiro, simboloJ1)) {
+        const comb = encontrarCombinacaoVencedora(simboloJ1);
+        destacarVitoria(comb);
+        if (mensagemEl) mensagemEl.textContent = `${nomeJ1} venceu!`;
+        tocarSomVitoria();
+        mostrarVitoria(nomeJ1);
+    } else if (verificarVitoriaEm(tabuleiro, simboloJ2)) {
+        const comb = encontrarCombinacaoVencedora(simboloJ2);
+        destacarVitoria(comb);
+        if (mensagemEl) mensagemEl.textContent = `${nomeJ2} venceu!`;
+        tocarSomVitoria();
+        mostrarVitoria(nomeJ2);
+    } else if (!tabuleiro.includes("")) {
+        if (mensagemEl) mensagemEl.textContent = "Empate!";
+        tocarSomEmpate();
+    }
+}
+
 // ---------------- TABULEIRO ----------------
 function criarTabuleiro() {
     if (!tabuleiroEl) return;
@@ -497,13 +528,12 @@ function jogarNaCelula(index) {
 
         if (isHost) {
             if (turnoAtual !== simboloJ1) return;
-            const simboloJogado = turnoAtual;  // captura ANTES (sempre "X")
+            const simboloJogado = turnoAtual;
             aplicarJogadaLocal(index, simboloJogado);
             versaoEstado++;
             enviarEstadoAtual();
             setDebug("Host: jogou X na célula " + index + " (v" + versaoEstado + ")");
         } else {
-            // CLIENTE NUNCA APLICA LOCALMENTE
             if (turnoAtual !== simboloJ2) return;
             if (conn && conn.open) {
                 setDebug("Cliente: enviando jogada (célula " + index + ")");
@@ -661,6 +691,7 @@ function iniciarPartida() {
     tabuleiro = ["", "", "", "", "", "", "", "", ""];
     jogoAcabou = false;
     turnoAtual = quemComeca;
+    resultadoExibido = false;   // v5.1 FIX
     esconderVitoria();
     criarTabuleiro();
     atualizarPainelEstado();
