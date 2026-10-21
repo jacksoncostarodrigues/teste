@@ -118,6 +118,7 @@ BOMB.ringMat = new THREE.MeshBasicMaterial({ color: 0xff1744 });
 /* ================= ESTADO ================= */
 let state = 'menu', score = 0, lives = START_LIVES, combo = 0, elapsed = 0,
     waveTimer = 1, flash = 0, pendingStart = false, pendingGameOver = false, clock = 0;
+const items = [], debris = [], parts = [];   // ← ESSA LINHA ESTAVA FALTANDO
 
 /* ================= SABRES (controles do óculos) ================= */
 const sabers = [];
@@ -322,25 +323,93 @@ renderer.setAnimationLoop(t => {
   update(dt); renderer.render(scene, camera);
 });
 
-/* ================= ENTRAR EM VR ================= */
-const btn = document.getElementById('enter'), msg = document.getElementById('msg'), ui = document.getElementById('ui');
+/* ================= ENTRAR EM VR + MODO DESKTOP ================= */
+const btn     = document.getElementById('enter');
+const msg     = document.getElementById('msg');
+const ui      = document.getElementById('ui');
+const btnTest = document.getElementById('testDesktop');
+
+/* ---- Função que liga o modo mouse (desktop) ---- */
+function enableDesktopMode() {
+  // Cria o sabre visível como filho da câmera
+  const bladeGeo = new THREE.CylinderGeometry(.015, .015, BLADE_LEN, 10);
+  const glowGeo  = new THREE.CylinderGeometry(.035, .035, BLADE_LEN, 10);
+  const blade = new THREE.Mesh(bladeGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  const glow  = new THREE.Mesh(glowGeo,  new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: .35 }));
+  blade.rotation.x = glow.rotation.x = Math.PI / 2;
+  const zCenter = -0.1 - BLADE_LEN / 2;
+  blade.position.set(0, 0, zCenter);
+  glow.position.set(0, 0, zCenter);
+  camera.add(blade, glow);
+  scene.add(camera);   // a câmera precisa estar na cena pra renderizar seus filhos
+
+  // Reaproveita o sabres[0] apontando para a câmera
+  const s = sabers[0];
+  s.c    = camera;
+  s.glow = glow;
+  s.gp   = null;    // sem haptic
+  s.active = true;
+
+  // Controles do mouse: gira a câmera
+  addEventListener('mousemove', (e) => {
+    if (ui.style.display !== 'none') return;
+    const nx = (e.clientX / innerWidth)  * 2 - 1;
+    const ny = -(e.clientY / innerHeight) * 2 + 1;
+    camera.rotation.y = -nx * Math.PI * 0.45;
+    camera.rotation.x =  ny * Math.PI * 0.25;
+  });
+
+  // Clique = "cutucada" pra cortar a melancia
+  addEventListener('click', () => {
+    if (ui.style.display !== 'none') return;
+    camera.rotation.y += 0.4;
+    setTimeout(() => { camera.rotation.y -= 0.4; }, 60);
+  });
+
+  ui.style.display = 'none';
+  msg.textContent  = 'Corte as frutas com o mouse!';
+  console.log('[DESKTOP] Modo teste ativo. Mova o mouse e clique para cortar a melancia.');
+}
+
+/* ---- Inicialização do botão VR ---- */
 (async () => {
-  if (!navigator.xr) { msg.textContent = 'WebXR indisponível. Abra esta página (via HTTPS) no navegador do Meta Quest.'; return; }
+  if (!navigator.xr) {
+    msg.textContent = 'WebXR indisponível (precisa HTTPS). Teste no desktop:';
+    if (btnTest) { btnTest.style.display = 'inline-block'; btnTest.onclick = enableDesktopMode; }
+    return;
+  }
   const ok = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
-  if (!ok) { msg.textContent = 'Este dispositivo não suporta VR imersivo.'; return; }
+  if (!ok) {
+    msg.textContent = 'Este dispositivo não suporta VR imersivo. Teste no desktop:';
+    if (btnTest) { btnTest.style.display = 'inline-block'; btnTest.onclick = enableDesktopMode; }
+    return;
+  }
   msg.textContent = 'Corte as frutas com os sabres e fuja das bombas!';
   btn.disabled = false;
+  if (btnTest) btnTest.style.display = 'inline-block';
 })();
+
+/* ---- Entrar em VR ---- */
 btn.onclick = async () => {
   try {
     AC = AC || new (window.AudioContext || window.webkitAudioContext)();
-    const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
+    const session = await navigator.xr.requestSession('immersive-vr', {
+      optionalFeatures: ['local-floor', 'bounded-floor']
+    });
     renderer.xr.setReferenceSpaceType('local-floor');
     await renderer.xr.setSession(session);
     ui.style.display = 'none';
     session.addEventListener('end', () => { ui.style.display = 'flex'; });
-  } catch (e) { msg.textContent = 'Erro ao iniciar VR: ' + e.message; }
+  } catch (e) {
+    msg.textContent = 'Erro ao iniciar VR: ' + e.message;
+  }
 };
+
+/* ---- Botão de teste desktop ---- */
+if (btnTest) {
+  btnTest.style.display = 'inline-block';
+  btnTest.onclick = enableDesktopMode;
+}
 
 /* ================= INÍCIO ================= */
 spawnStartFruit(); drawHud();
