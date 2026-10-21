@@ -250,6 +250,7 @@ function update(dt) {
     elapsed += dt; waveTimer -= dt;
     if (waveTimer <= 0) { spawnWave(); waveTimer = Math.max(0.9, 2.2 - elapsed * 0.014); }
   }
+
   // sabres
   sabers.forEach(s => {
     if (!s.active) return;
@@ -259,35 +260,42 @@ function update(dt) {
     if (s.prev && dt > 0) { s.vel.subVectors(s.tip, s.prev).divideScalar(dt); s.speed = s.vel.length(); }
     s.prev = (s.prev || new THREE.Vector3()).copy(s.tip);
   });
+
   // frutas e bombas
   for (let i = items.length - 1; i >= 0; i--) {
-    const it = items[i], m = it.mesh;
+    const it = items[i]; if (!it || !it.mesh) continue;      // guarda defensiva
+    const m = it.mesh;
     if (!it.still) { it.vel.y -= GRAV * dt; m.position.addScaledVector(it.vel, dt); }
     m.rotation.x += it.spin.x * dt; m.rotation.y += it.spin.y * dt; m.rotation.z += it.spin.z * dt;
     if (it.bomb) m.userData.ring.scale.setScalar(1 + Math.sin(clock * 10) * .12);
     if (it.start) m.position.y = 1.4 + Math.sin(clock * 2) * .04;
+
     if (!it.dead) {
       for (const s of sabers) {
         if (!s.active) continue;
         if (segDist(m.position, s.base, s.tip) < it.r + 0.04) {
           if (it.bomb) { hitBomb(it, s); break; }
-          // A melancia de início/fim precisa de menos velocidade para ser cortada.
-           const velocidadeMinima = it.start ? 0.15 : CUT_SPEED;
-           if (s.speed > velocidadeMinima) {
-               slice(it, s);
-               break;
-              }
+          const velocidadeMinima = it.start ? 0.15 : CUT_SPEED;
+          if (s.speed > velocidadeMinima) { slice(it, s); break; }
+        }
       }
     }
-  }
- 
+
     if (!it.dead && (m.position.z > 1.2 || m.position.y < -1)) {
-      if (!it.bomb && state === 'play' && combo) { combo = 0; drawHud(); } // fruta perdida zera o combo
+      if (!it.bomb && state === 'play' && combo) { combo = 0; drawHud(); }
       it.dead = true;
     }
-    if (it.dead) { scene.remove(m); items.splice(i, 1); }
+
+    if (it.dead) {
+      scene.remove(m);
+      const idx = items.indexOf(it);
+      if (idx >= 0) items.splice(idx, 1);      // ✅ remove o certo, sempre
+    }
   }
-  if (pendingStart) { pendingStart = false; startGame(); }
+
+  if (pendingGameOver) { pendingGameOver = false; gameOver(); }   // ✅ fora do loop
+  if (pendingStart)    { pendingStart = false;    startGame(); }
+
   // metades cortadas
   for (let i = debris.length - 1; i >= 0; i--) {
     const d = debris[i]; d.life -= dt; d.vel.y -= GRAV * dt;
@@ -296,13 +304,15 @@ function update(dt) {
     if (d.life < .4) d.g.scale.setScalar(Math.max(d.life / .4, .01));
     if (d.life <= 0) { scene.remove(d.g); debris.splice(i, 1); }
   }
+
   // partículas
   for (let i = parts.length - 1; i >= 0; i--) {
-    const p = parts[i]; p.life -= dt; p.vel.y -= GRAV * dt; p.m.position.addScaledVector(p.vel, dt);
+    const p = parts[i]; p.life -= dt; p.vel.y -= GRAV * dt;
+    p.m.position.addScaledVector(p.vel, dt);
     p.m.scale.setScalar(Math.max(p.life / .6, .01));
     if (p.life <= 0) { scene.remove(p.m); parts.splice(i, 1); }
   }
-  // flash vermelho ao tocar bomba
+
   if (flash > 0) { flash = Math.max(0, flash - dt * 2.5); scene.background.setRGB(.03 + flash * .7, .012, .1); }
 }
 let last = 0;
