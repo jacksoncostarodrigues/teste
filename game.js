@@ -1,5 +1,5 @@
 (() => {
-  console.log('✅ game.js CARREGADO — versão:', 'v5-items-fix');   // ⬅️ linha de teste
+  console.log('✅ game.js CARREGADO — versão:', 'v6-frutas-3d');   // ⬅️ linha de teste
 /* ================= CONFIG ================= */
 const GRAV = 3.2;            // gravidade das frutas (baixa = mais flutuante)
 const START_LIVES = 3;
@@ -16,6 +16,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
+renderer.localClippingEnabled = true;   // necessário para cortar as frutas ao meio (fruits.js)
 document.body.appendChild(renderer.domElement);
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
@@ -94,22 +95,7 @@ function snd(f, d, type = 'sine', v = 0.15, slide = 0) {
 }
 
 /* ================= TIPOS DE FRUTA / BOMBA ================= */
-const TYPES = [
-  { n: 'maçã',     r: .12, c: 0xe53935, f: 0xfff1c1 },
-  { n: 'laranja',  r: .13, c: 0xfb8c00, f: 0xffd180 },
-  { n: 'limão',    r: .10, c: 0xcddc39, f: 0xf9fbe7 },
-  { n: 'kiwi',     r: .10, c: 0x8d6e63, f: 0x9ccc65 },
-  { n: 'melancia', r: .17, c: 0x2e7d32, f: 0xff5252 },
-];
-const melon = TYPES[4];
-TYPES.forEach(t => {
-  t.geo = new THREE.SphereGeometry(t.r, 20, 14);
-  t.hgeo = new THREE.SphereGeometry(t.r, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
-  t.cap = new THREE.CircleGeometry(t.r, 16); t.cap.rotateX(Math.PI / 2); // face voltada p/ -y
-  t.skin = new THREE.MeshStandardMaterial({ color: t.c, roughness: .45, emissive: t.c, emissiveIntensity: .18 });
-  t.hskin = t.skin.clone(); t.hskin.side = THREE.DoubleSide;
-  t.flesh = new THREE.MeshStandardMaterial({ color: t.f, emissive: t.f, emissiveIntensity: .35 });
-});
+// As frutas agora vêm de fruits.js (Fruits.list / Fruits.random / Fruits.byName)
 const BOMB = { r: .13 };
 BOMB.geo = new THREE.SphereGeometry(BOMB.r, 20, 14);
 BOMB.mat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: .3, emissive: 0x550000, emissiveIntensity: .8 });
@@ -154,15 +140,15 @@ function haptic(s, intensity, ms) {
 }
 
 /* ================= OBJETOS ================= */
-function makeItem(type, pos, vel, opts = {}) {
-  let mesh, bomb = type === null;
+function makeItem(def, pos, vel, opts = {}) {
+  let mesh, bomb = def === null;
   if (bomb) {
     mesh = new THREE.Mesh(BOMB.geo, BOMB.mat);
     const ring = new THREE.Mesh(BOMB.ringGeo, BOMB.ringMat); mesh.add(ring); mesh.userData.ring = ring;
-  } else mesh = new THREE.Mesh(type.geo, type.skin);
+  } else mesh = Fruits.create(def);
   mesh.position.copy(pos); scene.add(mesh);
   items.push({
-    mesh, type, bomb, r: bomb ? BOMB.r : type.r, vel, dead: false, start: !!opts.start, still: !!opts.still,
+    mesh, def, bomb, r: bomb ? BOMB.r : def.r, vel, dead: false, start: !!opts.start, still: !!opts.still,
     spin: new THREE.Vector3((Math.random()-.5)*6, (Math.random()-.5)*6, (Math.random()-.5)*6),
   });
 }
@@ -171,7 +157,7 @@ function spawnFruit(bomb) {
   const p0 = new THREE.Vector3((Math.random() - .5) * 3, 0.3, -10);
   const xt = (Math.random() - .5) * 1.5, yt = 1.0 + Math.random() * 0.7, zt = -0.5;
   const v = new THREE.Vector3((xt - p0.x) / T, (yt - p0.y + 0.5 * GRAV * T * T) / T, (zt - p0.z) / T);
-  makeItem(bomb ? null : TYPES[Math.floor(Math.random() * 4)], p0, v);
+  makeItem(bomb ? null : Fruits.random(), p0, v);
 }
 function spawnWave() {
   const n = 1 + Math.floor(Math.random() * Math.min(4, 1 + elapsed / 25 + 1));
@@ -184,7 +170,7 @@ function spawnWave() {
   }
 }
 function spawnStartFruit() {
-  makeItem(melon, new THREE.Vector3(0, 1.4, -1.6), new THREE.Vector3(), { start: true, still: true });
+  makeItem(Fruits.byName('melancia'), new THREE.Vector3(0, 1.4, -1.6), new THREE.Vector3(), { start: true, still: true });
 }
 function clearItems() { items.forEach(i => scene.remove(i.mesh)); items.length = 0; }
 
@@ -199,24 +185,20 @@ function burst(pos, color, n, speed) {
 }
 
 /* ================= AÇÕES ================= */
-function slice(it, s)
- {
-  const t = it.type, pos = it.mesh.position.clone();
+function slice(it, s) {
+  const def = it.def, pos = it.mesh.position.clone();
   const dir = s.vel.clone(); if (dir.lengthSq() < 1e-4) dir.set(1, 0, 0); dir.normalize();
   const axis = s.tip.clone().sub(s.base).normalize();
   let n = new THREE.Vector3().crossVectors(dir, axis);
   if (n.lengthSq() < 1e-4) n.set(0, 1, 0);
   n.normalize();
-  [1, -1].forEach(sg => {
-    const g = new THREE.Group();
-    g.add(new THREE.Mesh(t.hgeo, t.hskin), new THREE.Mesh(t.cap, t.flesh));
-    g.position.copy(pos);
-    g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), n.clone().multiplyScalar(sg));
+  Fruits.halves(it.mesh, n).forEach((g, k) => {
+    const sg = k ? -1 : 1;
     scene.add(g);
     debris.push({ g, life: 1.6, vel: it.vel.clone().multiplyScalar(.5).addScaledVector(n, sg * 1.1).add(new THREE.Vector3(0, .6, 0)),
       spin: new THREE.Vector3((Math.random()-.5)*5, (Math.random()-.5)*5, (Math.random()-.5)*5) });
   });
-  burst(pos, t.f, 12, 2);
+  burst(pos, def.juice, 12, 2);
   haptic(s, .6, 60);
   it.dead = true;
   if (it.start) { pendingStart = true; snd(520, .25, 'triangle', .2, 600); return; }
@@ -304,6 +286,7 @@ function update(dt) {
     const d = debris[i]; d.life -= dt; d.vel.y -= GRAV * dt;
     d.g.position.addScaledVector(d.vel, dt);
     d.g.rotation.x += d.spin.x * dt; d.g.rotation.z += d.spin.z * dt;
+    d.g.userData.update();   // mantém o plano de corte acompanhando a metade
     if (d.life < .4) d.g.scale.setScalar(Math.max(d.life / .4, .01));
     if (d.life <= 0) { scene.remove(d.g); debris.splice(i, 1); }
   }
