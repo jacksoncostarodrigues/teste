@@ -116,8 +116,8 @@ BOMB.ringGeo = new THREE.TorusGeometry(BOMB.r * 1.15, .012, 8, 24);
 BOMB.ringMat = new THREE.MeshBasicMaterial({ color: 0xff1744 });
 
 /* ================= ESTADO ================= */
-let state = 'menu', score = 0, lives = START_LIVES, combo = 0, elapsed = 0, waveTimer = 1, flash = 0, pendingStart = false, clock = 0;
-const items = [], debris = [], parts = [];
+let state = 'menu', score = 0, lives = START_LIVES, combo = 0, elapsed = 0,
+    waveTimer = 1, flash = 0, pendingStart = false, pendingGameOver = false, clock = 0;
 
 /* ================= SABRES (controles do óculos) ================= */
 const sabers = [];
@@ -227,7 +227,8 @@ function hitBomb(it, s) {
   burst(it.mesh.position, 0xff9100, 24, 4);
   haptic(sabers[0], 1, 300); haptic(sabers[1], 1, 300);
   snd(140, .5, 'sawtooth', .3, -90);
-  if (lives <= 0) gameOver(); else drawHud();
+  if (lives <= 0) pendingGameOver = true;       // ✅ sinaliza
+  else drawHud();
 }
 function startGame() {
   clearItems(); score = 0; lives = START_LIVES; combo = 0; elapsed = 0; waveTimer = 1; state = 'play'; drawHud();
